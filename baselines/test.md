@@ -51,7 +51,7 @@ python -m baselines.run --alg=deepq --env=CartPole-v0 --load_path=./cartpole_mod
             + update_target()
 + q_func = build_q_func()
     + 在models中定义，返回一个q_out
-    + 这里定义了这一通操作是干啥的
+    + 这里定义了这一通操作是干啥的,定义网络结构，从状态动作，到Q值的映射方法。
     + dueling 定义在这里，默认是true，不过目前想关注的是double
 + deepq.build_train()
     + 在build_graph 内的， double_q默认True

@@ -1,3 +1,13 @@
+#个人构造函数入口，仿照baseline 原有的run.py
+'''
+1.一些模块的加载,try import
+2. 主函数
+3. 读取参数
+4. MPI的使用？？
+5. logger 使用？？
+6. 定义train函数
+
+'''
 import sys
 import re
 import multiprocessing
@@ -14,27 +24,21 @@ from baselines.common.tf_util import get_session
 from baselines import logger
 from importlib import import_module
 
+#MPI
 try:
     from mpi4py import MPI
 except ImportError:
     MPI = None
+#logger使用
+from baselines import logger
 
-try:
-    import pybullet_envs
-except ImportError:
-    pybullet_envs = None
 
-try:
-    import roboschool
-except ImportError:
-    roboschool = None
-
+#解析环境
 _game_envs = defaultdict(set)
 for env in gym.envs.registry.all():
     # TODO: solve this with regexes
     env_type = env.entry_point.split(':')[0].split('.')[-1]
     _game_envs[env_type].add(env.id)
-
 # reading benchmark names directly from retro requires
 # importing retro here, and for some reason that crashes tensorflow
 # in ubuntu
@@ -49,39 +53,27 @@ _game_envs['retro'] = {
     'SpaceInvaders-Snes',
 }
 
+#参数读入
+def parse_cmdline_kwargs(args):
+    '''
+    convert a list of '='-spaced command-line arguments to a dictionary, evaluating python objects when possible
+    '''
+    def parse(v):
 
-def train(args, extra_args):
-    env_type, env_id = get_env_type(args)
-    print('env_type: {}'.format(env_type))
+        assert isinstance(v, str)
+        try:
+            return eval(v)
+        except (NameError, SyntaxError):
+            return v
 
-    total_timesteps = int(args.num_timesteps)
-    seed = args.seed
+    return {k: parse(v) for k,v in parse_unknown_args(args).items()}
 
-    learn = get_learn_function(args.alg)
-    alg_kwargs = get_learn_function_defaults(args.alg, env_type)
-    alg_kwargs.update(extra_args)
-
-    env = build_env(args)
-    if args.save_video_interval != 0:
-        env = VecVideoRecorder(env, osp.join(logger.get_dir(), "videos"), record_video_trigger=lambda x: x % args.save_video_interval == 0, video_length=args.save_video_length)
-
-    if args.network:
-        alg_kwargs['network'] = args.network
+#logger的使用
+def configure_logger(log_path, **kwargs):
+    if log_path is not None:
+        logger.configure(log_path)
     else:
-        if alg_kwargs.get('network') is None:
-            alg_kwargs['network'] = get_default_network(env_type)
-
-    print('Training {} on {}:{} with arguments \n{}'.format(args.alg, env_type, env_id, alg_kwargs))
-
-    model = learn(
-        env=env,
-        seed=seed,
-        total_timesteps=total_timesteps,
-        **alg_kwargs
-    )
-
-    return model, env
-
+        logger.configure(**kwargs)
 
 def build_env(args):
     ncpu = multiprocessing.cpu_count()
@@ -117,7 +109,7 @@ def build_env(args):
 
     return env
 
-
+#得到环境的内部ID
 def get_env_type(args):
     env_id = args.env
 
@@ -144,7 +136,7 @@ def get_env_type(args):
 
     return env_type, env_id
 
-
+#得到默认的网络结构
 def get_default_network(env_type):
     if env_type in {'atari', 'retro'}:
         return 'cnn'
@@ -166,7 +158,7 @@ def get_alg_module(alg, submodule=None):
 def get_learn_function(alg):
     return get_alg_module(alg).learn
 
-
+#学习函数的来源
 def get_learn_function_defaults(alg, env_type):
     try:
         alg_defaults = get_alg_module(alg, 'defaults')
@@ -176,36 +168,48 @@ def get_learn_function_defaults(alg, env_type):
     return kwargs
 
 
+#训练函数的定义（两个参数的含义是什么
+def train(args, extra_args):
+    env_type, env_id = get_env_type(args)
+    print('env_type: {}'.format(env_type))
 
-def parse_cmdline_kwargs(args):
-    '''
-    convert a list of '='-spaced command-line arguments to a dictionary, evaluating python objects when possible
-    '''
-    def parse(v):
+    total_timesteps = int(args.num_timesteps)
+    seed = args.seed
+    #算法由参数指定，所以我们用哪个入口无所谓
+    learn = get_learn_function(args.alg)
+    alg_kwargs = get_learn_function_defaults(args.alg, env_type)
+    alg_kwargs.update(extra_args)
 
-        assert isinstance(v, str)
-        try:
-            return eval(v)
-        except (NameError, SyntaxError):
-            return v
+    env = build_env(args)
+    if args.save_video_interval != 0:
+        env = VecVideoRecorder(env, osp.join(logger.get_dir(), "videos"), record_video_trigger=lambda x: x % args.save_video_interval == 0, video_length=args.save_video_length)
 
-    return {k: parse(v) for k,v in parse_unknown_args(args).items()}
-
-
-def configure_logger(log_path, **kwargs):
-    if log_path is not None:
-        logger.configure(log_path)
+    if args.network:
+        alg_kwargs['network'] = args.network
     else:
-        logger.configure(**kwargs)
+        if alg_kwargs.get('network') is None:
+            alg_kwargs['network'] = get_default_network(env_type)
+
+    print('Training {} on {}:{} with arguments \n{}'.format(args.alg, env_type, env_id, alg_kwargs))
+
+    #把主要的训练步骤指向了learn 函数，learn函数来自各个算法的文件夹
+    model = learn(
+        env=env,
+        seed=seed,
+        total_timesteps=total_timesteps,
+        **alg_kwargs
+    )
+
+    return model, env
 
 
 def main(args):
-    # configure logger, disable logging in child MPI processes (with rank > 0)
-
+    #读取参数
     arg_parser = common_arg_parser()
     args, unknown_args = arg_parser.parse_known_args(args)
     extra_args = parse_cmdline_kwargs(unknown_args)
 
+    #MPI 的使用，logger的使用,暂时略过
     if MPI is None or MPI.COMM_WORLD.Get_rank() == 0:
         rank = 0
         configure_logger(args.log_path)
@@ -213,9 +217,10 @@ def main(args):
         rank = MPI.COMM_WORLD.Get_rank()
         print("--------------------",rank)
         configure_logger(args.log_path, format_strs=[])
-
+    
+    # 根据输入参数训练得到model
     model, env = train(args, extra_args)
-
+    
     if args.save_path is not None and rank == 0:
         save_path = osp.expanduser(args.save_path)
         model.save(save_path)
@@ -244,8 +249,5 @@ def main(args):
                     episode_rew[i] = 0
 
     env.close()
-
-    return model
-
 if __name__ == '__main__':
     main(sys.argv)
